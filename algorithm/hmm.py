@@ -14,7 +14,7 @@ class HmmModel:
         self.PI = np.zeros(4)
 
     # 加载数据 先加载模型数据，没有就读取语料库重新训练
-    def load(self,train_files, model_file='./seg-data/training/model.pkl'):
+    def load(self,train_files, model_file='../seg-data/training/model.pkl'):
         # 加载模型数据
         try:
             with open(model_file, 'rb') as f:
@@ -205,15 +205,15 @@ if __name__ == '__main__':
     hmm = HmmModel()
 
     # 加载待分词文章
-    artical = hmm.loadArtical('./seg-data/testing/msr_test.utf8')
+    artical = hmm.loadArtical('../seg-data/testing/msr_test.utf8')
     # 进行分词
-    partiArtical = hmm.participle(artical,['./seg-data/training/pku_training.utf8','./seg-data/training/msr_training.utf8'])
+    partiArtical = hmm.participle(artical,['../seg-data/training/pku_training.utf8','../seg-data/training/msr_training.utf8'])
     # 存储分词结果
-    hmm.store_result('./seg-data/gold/my_msr_test.utf8',partiArtical)
+    hmm.store_result('../seg-data/gold/hmm_msr_test.utf8',partiArtical)
 
     # 加载待分词文章
-    artical1 = hmm.loadArtical('./seg-data/testing/pku_test.utf8')
+    artical1 = hmm.loadArtical('../seg-data/testing/pku_test.utf8')
     # 进行分词
-    partiArtical1 = hmm.participle(artical1,['./seg-data/training/pku_training.utf8', './seg-data/training/msr_training.utf8'])
+    partiArtical1 = hmm.participle(artical1,['../seg-data/training/pku_training.utf8', '../seg-data/training/msr_training.utf8'])
     # 存储分词结果
-    hmm.store_result('./seg-data/gold/my_pku_test.utf8', partiArtical1)
+    hmm.store_result('../seg-data/gold/hmm_pku_test.utf8', partiArtical1)
