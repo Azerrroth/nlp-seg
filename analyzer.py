@@ -10,7 +10,7 @@ class Analyzer(ABC):
         pass
 
     @abstractmethod
-    def analyze(self, sentence, **kwargs):
+    def segment(self, sentence, **kwargs):
         '''
         Analyze the sentenec and return the segment result
 
