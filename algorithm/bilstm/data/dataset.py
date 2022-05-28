@@ -69,10 +69,40 @@ class SegDataset(Dataset.Dataset):
         word_ids, label_ids, input_mask = self.get_long_tensor(
             words, labels, batch_size)
 
-        return [word_ids, label_ids, input_mask, lens]
+        return word_ids, label_ids, input_mask, lens
+
+    def encode_label(self, label):
+        return self.label_encoder.get(label)
+
+    def decode_label(self, label_id):
+        return self.label_decoder.get(label_id)
+
+    def encode_word(self, word):
+        return self.word_encoder.get(word)
+
+    def decode_word(self, word_id):
+        return self.word_decoder.get(word_id)
+
+
+def make_dloader(datapath,
+                 batch_size,
+                 label_encoder,
+                 max_size=1e7,
+                 sep=' ',
+                 shuffle: bool = True):
+    dataset = SegDataset(datapath, label_encoder, max_size, sep)
+    dloader = torch.utils.data.DataLoader(dataset,
+                                          batch_size=batch_size,
+                                          shuffle=shuffle,
+                                          collate_fn=dataset.collate_fn)
+    return dloader, dataset
 
 
 if __name__ == '__main__':
     label2id = {'B': 0, 'M': 1, 'E': 2, 'S': 3}
     file_path = 'seg-data/training/pku_training.utf8'
-    dataset = SegDataset(file_path, label2id, 1e8)
+    loader, train_dataset = make_dloader(file_path,
+                                         batch_size=32,
+                                         label_encoder=label2id,
+                                         max_size=1e8,
+                                         sep=' ')
