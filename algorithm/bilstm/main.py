@@ -3,18 +3,22 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'data'))
 sys.path.append(os.path.join(os.path.dirname(__file__), 'model'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
 
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 import random
+import numpy as np
 from data.dataset import make_dloader
 from model.bilstm import BiLSTM
+from utils.tag2seg import tag2seg
 
 config = {
     "run_name": "PKU",
     "vocab_size": 1e7,
+    "token_length": 1000,
     "embedding_dim": 128,
     "hidden_dim": 256,
     "num_layers": 2,
@@ -64,6 +68,23 @@ def create_callbacks(config):
     return callbacks
 
 
+def predict(model, sentence: str, vocab: dict, token_length: int,
+            label_decoder: dict):
+    words_arr = sentence.strip().split()
+    sentence_vec = torch.LongTensor(1, token_length).fill_(0)
+    mask = torch.ByteTensor(1, token_length).fill_(0)
+    for i, word in enumerate(words_arr):
+        sentence_vec[0, i] = vocab.get(word, 0)
+    mask[0, :len(sentence)] = torch.tensor([1] * len(sentence),
+                                           dtype=torch.bool)
+
+    tag_preds = model.predict(sentence_vec, mask)
+    # tag_preds = model.crf.decode(tag_preds, mask)
+    tag_preds = np.array(tag_preds).flatten()
+    tags = [label_decoder.get(x) for x in tag_preds]
+    return tag2seg(sentence, tags).strip()
+
+
 def main(config):
 
     from pytorch_lightning import seed_everything
@@ -103,20 +124,27 @@ def main(config):
 
     label2id = config["label2id"]
     train_dloader, train_dataset = make_dloader(
-        'seg-data/training/pku_training.utf8',
+        datapath='seg-data/training/pku_training.utf8',
         batch_size=config['batch_size'],
         label_encoder=label2id,
         max_size=1e7,
         sep=' ',
-        shuffle=True)
+        shuffle=True,
+        train=True,
+        token_length=config['token_length'],
+    )
 
-    # test_data = None
-    # test_dloader = make_dloader('seg-data/testing/pku_test.utf8',
-    #                             batch_size=config['batch_size'],
-    #                             label_encoder=label2id,
-    #                             max_size=1e7,
-    #                             sep=' ',
-    #                             shuffle=True)
+    test_dloader, test_dataset = make_dloader(
+        'seg-data/testing/pku_test.utf8',
+        batch_size=config['batch_size'],
+        label_encoder=label2id,
+        max_size=1e7,
+        sep=' ',
+        shuffle=False,
+        train=False,
+        word_encoder=train_dataset.word_encoder,
+        token_length=config['token_length'],
+    )
 
     bilstm = BiLSTM(
         vocab_size=config['vocab_size'],
@@ -156,10 +184,17 @@ def main(config):
         sync_batchnorm=True,
         val_check_interval=1.0,
         max_epochs=100,
-        fast_dev_run=10,
     )
 
-    trainer.fit(model=bilstm, train_dataloader=train_dloader)
+    # trainer.fit(model=bilstm, train_dataloader=train_dloader)
+
+    # Test
+    # trainer.test(test_dataloader=test_dloader)
+
+    case = "今天天气怎么样？"
+    print(
+        predict(bilstm, case, train_dataset.word_encoder,
+                config['token_length'], train_dataset.label_decoder))
 
 
 if __name__ == "__main__":

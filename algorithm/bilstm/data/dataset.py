@@ -14,22 +14,41 @@ class SegDataset(Dataset.Dataset):
                  datapath: str,
                  label_encoder: dict,
                  max_size=1e7,
-                 sep: str = ' '):
+                 sep: str = ' ',
+                 train: bool = True,
+                 word_encoder: dict = None,
+                 token_length: int = 1000):
         # self.super().__init__()
 
         self.datapath = datapath
+        self.token_length = token_length
         word_list, label_list = process_data(datapath, sep=sep)
-        word_encoder = get_vocabulary(word_list=word_list, max_size=max_size)
+        if word_encoder is None:
+            word_encoder = get_vocabulary(word_list=word_list,
+                                          max_size=max_size)
         self.word_encoder = word_encoder
         self.word_decoder = {v: k for k, v in self.word_encoder.items()}
         self.label_encoder = label_encoder
         self.label_decoder = {v: k for k, v in self.label_encoder.items()}
         self.dataset = self.preprocess(word_list, label_list)
 
+    def check_exists(self, word):
+        """
+        动态增加词表，因为之前没有，词频肯定是最低的，直接加到最后
+        """
+        exists = self.word_encoder.get(word)
+        if exists is None:
+            print("Add word to vocabulary: {}".format(word))
+            self.word_encoder[word] = len(self.word_encoder)
+            self.word_decoder[len(self.word_decoder)] = word
+
     def preprocess(self, words_list, labels_list):
         """convert the data to ids"""
         processed = []
         for (words, labels) in zip(words_list, labels_list):
+            for word in words:
+                self.check_exists(word)
+
             word_id = [self.word_encoder[word] for word in words]  # word to id
             label_id = [self.label_encoder[label]
                         for label in labels]  # label to id
@@ -46,7 +65,8 @@ class SegDataset(Dataset.Dataset):
         return len(self.dataset)
 
     def get_long_tensor(self, words, labels, batch_size):
-        token_len = max([len(x) for x in labels])
+        assert self.token_length >= max([len(x) for x in labels])
+        token_len = self.token_length
         word_tokens = torch.LongTensor(batch_size, token_len).fill_(0)
         label_tokens = torch.LongTensor(batch_size, token_len).fill_(0)
         mask_tokens = torch.ByteTensor(batch_size, token_len).fill_(0)
@@ -89,12 +109,23 @@ def make_dloader(datapath,
                  label_encoder,
                  max_size=1e7,
                  sep=' ',
-                 shuffle: bool = True):
-    dataset = SegDataset(datapath, label_encoder, max_size, sep)
-    dloader = torch.utils.data.DataLoader(dataset,
-                                          batch_size=batch_size,
-                                          shuffle=shuffle,
-                                          collate_fn=dataset.collate_fn)
+                 train: bool = True,
+                 word_encoder=None,
+                 token_length: int = 1000,
+                 shuffle: bool = False):
+    dataset = SegDataset(datapath=datapath,
+                         label_encoder=label_encoder,
+                         max_size=max_size,
+                         sep=sep,
+                         train=train,
+                         word_encoder=word_encoder,
+                         token_length=token_length)
+    dloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=dataset.collate_fn,
+    )
     return dloader, dataset
 
 

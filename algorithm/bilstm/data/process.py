@@ -29,7 +29,7 @@ def getlist(input_str):
 def process_data(file_path: str,
                  max_size: int = None,
                  output_path: str = None,
-                 sep: str = '  '):
+                 sep: str = ' '):
     '''
     处理数据
     '''

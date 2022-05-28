@@ -140,6 +140,49 @@ class BiLSTM(pl.LightningModule):
         }
         self._log_stats('train', res)
 
+    def validation_step(self, batch, batch_idx):
+        word, label, mask, length = batch
+        tag_preds = self(word, label, mask)
+        crf_loss = self.crf(tag_preds, label, mask) * -1
+        loss = crf_loss
+        labels_pred = self.crf.decode(tag_preds, mask=mask)
+        targets = [
+            itag[:ilen] for itag, ilen in zip(label.cpu().numpy(), length)
+        ]
+        return {
+            'loss': loss,
+            'crf_loss': crf_loss,
+            'labels_pred': labels_pred,
+            'targets': targets
+        }
+
+    def validation_step_end(self, output):
+        self._log_stats('valid', output)
+        return output
+
+    def validation_epoch_end(self, outputs):
+        true_tags = []
+        pred_tags = []
+        loss = 0
+        for output in outputs:
+            loss += output['loss'].item()
+            targets = output['targets']
+            labels_pred = output['labels_pred']
+            true_tags.extend([[self.label_decoder.get(idx) for idx in indexs]
+                              for indexs in targets])
+            pred_tags.extend([[self.label_decoder.get(idx) for idx in indexs]
+                              for indexs in labels_pred])
+
+        f1, pre, rec = metrics.f1_score(true_tags, pred_tags)
+
+        res = {
+            "f1": f1,
+            "precision": pre,
+            "recall": rec,
+            "loss": loss / len(outputs)
+        }
+        self._log_stats('valid', res)
+
     def _log_stats(self, section, outs):
         for key in outs.keys():
             if "loss" not in key:
@@ -148,3 +191,8 @@ class BiLSTM(pl.LightningModule):
             if isinstance(stat, np.ndarray) or isinstance(stat, torch.Tensor):
                 stat = stat.mean()
             self.log(f"{section}/{key}", stat, sync_dist=False)
+
+    def predict(self, word, mask):
+        tag_preds = self(word, None, mask)
+        labels_pred = self.crf.decode(tag_preds, mask=mask)
+        return labels_pred
