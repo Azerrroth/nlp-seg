@@ -24,7 +24,7 @@ config = {
     "token_length": 1000,
     "embedding_dim": 10,
     "hidden_dim": 256,
-    "num_layers": 2,
+    "num_layers": 3,
     "lstm_dropout": 0.2,
     "label_size": 4,
     "label2id": {
@@ -33,7 +33,7 @@ config = {
         'E': 2,
         'S': 3
     },
-    "batch_size": 256,
+    "batch_size": 1000,
     "max_len": 128,
     "base_lr": 1e-2,
     "init_lr": 1e-10,
@@ -41,7 +41,7 @@ config = {
     "warmup_steps": 10,
     "decay_factor": 0.5,
     "seed": 42,
-    "wandb": False,
+    "wandb": True,
     "wandb_project": "nlp-bilstm",
     "wandb_entity": "azerrroth",
     "early_stopping": True,
@@ -192,12 +192,12 @@ def main(config):
         default_root_dir=f"{config['save_dir']}/checkpoints",
     )
 
-    # trainer.fit(model=bilstm,
-    #             train_dataloaders=train_dloader,
-    #             val_dataloaders=test_dloader)
+    trainer.fit(model=bilstm,
+                train_dataloaders=train_dloader,
+                val_dataloaders=test_dloader)
 
-    # # Test
-    # trainer.test(model=bilstm, dataloaders=test_dloader)
+    # Test
+    trainer.test(model=bilstm, dataloaders=test_dloader)
 
     output_path = "output/{}.{}.txt".format(config['run_name'], date.today())
     output_file = open(output_path, "w")
