@@ -56,7 +56,8 @@ def create_callbacks(config):
         f"{config['save_dir']}/model_checkpoints/{config['run_name']}_{''.join([str(random.randint(0,9)) for _ in range(9)])}",
         monitor="valid/loss",
         mode="min",
-        filename=f"{config['run_name']}" + "{epoch:02d}-{loss:.2f}",
+        filename=f"{config['run_name']}" +
+        "{epoch:02d}-{valid_loss:.2f}-{valid_f1:.2f}",
         save_top_k=3,
     )
     callbacks = [saving]

@@ -61,7 +61,6 @@ class BiLSTM(pl.LightningModule):
         # 输出模型对 标记输出的概率 （未归一化）
 
         self.crf = CRF(self.label_size, batch_first=True)
-        
 
     def forward(self, word, label, mask):
         embedding_res = self.embedding(word)
@@ -173,6 +172,8 @@ class BiLSTM(pl.LightningModule):
             "recall": rec,
             "loss": loss / len(outputs)
         }
+        self.log('valid_loss', res["loss"], prog_bar=True, logger=True)
+        self.log('valid_f1', res["f1"], prog_bar=True, logger=True)
         self._log_stats('valid', res)
 
     def test_step(self, batch, batch_idx):
@@ -186,12 +187,15 @@ class BiLSTM(pl.LightningModule):
 
     def _log_stats(self, section, outs):
         for key in outs.keys():
-            if "loss" not in key:
-                continue
             stat = outs[key]
             if isinstance(stat, np.ndarray) or isinstance(stat, torch.Tensor):
                 stat = stat.mean()
-            self.log(f"{section}/{key}", stat, sync_dist=False, batch_size=self.batch_size)
+            if isinstance(stat, list):
+                continue
+            self.log(f"{section}/{key}",
+                     stat,
+                     sync_dist=False,
+                     batch_size=self.batch_size)
 
     def predict(self, word, mask):
         tag_preds = self(word, None, mask)
