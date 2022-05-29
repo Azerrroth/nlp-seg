@@ -38,7 +38,8 @@ class SegDataset(Dataset.Dataset):
         """
         exists = self.word_encoder.get(word)
         if exists is None:
-            print("Add word to vocabulary: {}".format(word))
+            print("Add word to vocabulary: {}. Vocab size: {}".format(
+                word, len(self.word_encoder)))
             self.word_encoder[word] = len(self.word_encoder)
             self.word_decoder[len(self.word_decoder)] = word
 
@@ -65,17 +66,17 @@ class SegDataset(Dataset.Dataset):
         return len(self.dataset)
 
     def get_long_tensor(self, words, labels, batch_size):
-        assert self.token_length >= max([len(x) for x in labels])
-        token_len = self.token_length
+        # assert self.token_length >= max([len(x) for x in labels])
+        token_len = max(self.token_length, max([len(x) for x in labels]))
         word_tokens = torch.LongTensor(batch_size, token_len).fill_(0)
         label_tokens = torch.LongTensor(batch_size, token_len).fill_(0)
-        mask_tokens = torch.ByteTensor(batch_size, token_len).fill_(0)
+        mask_tokens = torch.BoolTensor(batch_size, token_len).fill_(0)
 
         for i, s in enumerate(zip(words, labels)):
             word_tokens[i, :len(s[0])] = torch.LongTensor(s[0])
             label_tokens[i, :len(s[1])] = torch.LongTensor(s[1])
             mask_tokens[i, :len(s[0])] = torch.tensor([1] * len(s[0]),
-                                                      dtype=torch.uint8)
+                                                      dtype=torch.bool)
 
         return word_tokens, label_tokens, mask_tokens
 
@@ -112,6 +113,7 @@ def make_dloader(datapath,
                  train: bool = True,
                  word_encoder=None,
                  token_length: int = 1000,
+                 num_workers: int = 32,
                  shuffle: bool = False):
     dataset = SegDataset(datapath=datapath,
                          label_encoder=label_encoder,
@@ -125,6 +127,7 @@ def make_dloader(datapath,
         batch_size=batch_size,
         shuffle=shuffle,
         collate_fn=dataset.collate_fn,
+        num_workers=num_workers,
     )
     return dloader, dataset
 
@@ -135,5 +138,5 @@ if __name__ == '__main__':
     loader, train_dataset = make_dloader(file_path,
                                          batch_size=32,
                                          label_encoder=label2id,
-                                         max_size=1e8,
+                                         max_size=1e7,
                                          sep=' ')

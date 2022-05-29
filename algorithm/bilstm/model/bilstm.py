@@ -26,7 +26,6 @@ class BiLSTM(pl.LightningModule):
         batch_size: int,
         max_len: int,
         label_decoder: dict,
-        word_decoder: dict,
         device: torch.device = torch.device('cpu'),
         base_lr: float = 1e-3,
         init_lr: float = 1e-10,
@@ -50,7 +49,6 @@ class BiLSTM(pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.decay_factor = 0.5
         self.label_decoder = label_decoder
-        self.word_decoder = word_decoder
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim)
         self.lstm = nn.LSTM(self.embedding_dim,
                             self.hidden_dim,
@@ -63,6 +61,7 @@ class BiLSTM(pl.LightningModule):
         # 输出模型对 标记输出的概率 （未归一化）
 
         self.crf = CRF(self.label_size, batch_first=True)
+        
 
     def forward(self, word, label, mask):
         embedding_res = self.embedding(word)
@@ -94,24 +93,29 @@ class BiLSTM(pl.LightningModule):
             'monitor': "train/loss"
         }
 
-    def training_step(self, batch, batch_idx):
-        word, label, mask, length = batch
+    def step(self, word, label, mask, length):
         tag_preds = self(word, label, mask)
         crf_loss = self.crf(tag_preds, label, mask) * -1
         loss = crf_loss
 
         labels_pred = self.crf.decode(tag_preds, mask=mask)
 
+        preds = []
+        for labels in labels_pred:
+            preds.append(np.asarray(labels))
         targets = [
             itag[:ilen] for itag, ilen in zip(label.cpu().numpy(), length)
         ]
 
         return {
-            'loss': loss,
-            'crf_loss': crf_loss,
-            'labels_pred': labels_pred,
+            'loss': loss / self.batch_size,
+            'labels_pred': preds,
             'targets': targets
         }
+
+    def training_step(self, batch, batch_idx):
+        word, label, mask, length = batch
+        return self.step(word, label, mask, length)
 
     def training_step_end(self, output):
         self._log_stats('train', output)
@@ -142,19 +146,7 @@ class BiLSTM(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         word, label, mask, length = batch
-        tag_preds = self(word, label, mask)
-        crf_loss = self.crf(tag_preds, label, mask) * -1
-        loss = crf_loss
-        labels_pred = self.crf.decode(tag_preds, mask=mask)
-        targets = [
-            itag[:ilen] for itag, ilen in zip(label.cpu().numpy(), length)
-        ]
-        return {
-            'loss': loss,
-            'crf_loss': crf_loss,
-            'labels_pred': labels_pred,
-            'targets': targets
-        }
+        return self.step(word, label, mask, length)
 
     def validation_step_end(self, output):
         self._log_stats('valid', output)
@@ -183,6 +175,15 @@ class BiLSTM(pl.LightningModule):
         }
         self._log_stats('valid', res)
 
+    def test_step(self, batch, batch_idx):
+        return self.validation_step(batch, batch_idx)
+
+    def test_step_end(self, output):
+        return self.validation_step_end(output)
+
+    def test_epoch_end(self, outputs):
+        return self.validation_epoch_end(outputs)
+
     def _log_stats(self, section, outs):
         for key in outs.keys():
             if "loss" not in key:
@@ -190,7 +191,7 @@ class BiLSTM(pl.LightningModule):
             stat = outs[key]
             if isinstance(stat, np.ndarray) or isinstance(stat, torch.Tensor):
                 stat = stat.mean()
-            self.log(f"{section}/{key}", stat, sync_dist=False)
+            self.log(f"{section}/{key}", stat, sync_dist=False, batch_size=self.batch_size)
 
     def predict(self, word, mask):
         tag_preds = self(word, None, mask)
