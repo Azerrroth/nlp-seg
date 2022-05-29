@@ -22,7 +22,7 @@ config = {
     "run_name": "PKU",
     "vocab_size": 1e7,
     "token_length": 1000,
-    "embedding_dim": 32,
+    "embedding_dim": 10,
     "hidden_dim": 256,
     "num_layers": 2,
     "lstm_dropout": 0.2,
@@ -33,15 +33,15 @@ config = {
         'E': 2,
         'S': 3
     },
-    "batch_size": 64,
+    "batch_size": 256,
     "max_len": 128,
-    "base_lr": 1e-3,
+    "base_lr": 1e-2,
     "init_lr": 1e-10,
     "l2_coeff": 1e-6,
     "warmup_steps": 10,
     "decay_factor": 0.5,
     "seed": 42,
-    "wandb": True,
+    "wandb": False,
     "wandb_project": "nlp-bilstm",
     "wandb_entity": "azerrroth",
     "early_stopping": True,
@@ -54,7 +54,7 @@ def create_callbacks(config):
     saving = ModelCheckpoint(
         dirpath=
         f"{config['save_dir']}/model_checkpoints/{config['run_name']}_{''.join([str(random.randint(0,9)) for _ in range(9)])}",
-        monitor="valid/loss",
+        monitor="valid/f1",
         mode="min",
         filename=f"{config['run_name']}" +
         "{epoch:02d}-{valid_loss:.2f}-{valid_f1:.2f}",
@@ -65,7 +65,7 @@ def create_callbacks(config):
     if config['early_stopping']:
         callbacks.append(
             pl.callbacks.early_stopping.EarlyStopping(
-                monitor="valid/loss",
+                monitor="valid/f1",
                 patience=5,
             ))
 
@@ -77,7 +77,8 @@ def create_callbacks(config):
 
 def predict(model, sentence: str, vocab: dict, token_length: int,
             label_decoder: dict):
-    words_arr = sentence.strip().split()
+    words_arr = sentence.strip()
+    words_arr = list(words_arr)
     sentence_vec = torch.LongTensor(1, token_length).fill_(0)
     mask = torch.ByteTensor(1, token_length).fill_(0)
     for i, word in enumerate(words_arr):
@@ -97,7 +98,6 @@ def main(config):
     from pytorch_lightning import seed_everything
     seed_everything(config['seed'])
     if config['wandb']:
-        import wandb
         project = config.get('wandb_project')
         entity = config.get('wandb_entity')
         # project = os.getenv("WANDB_PROJECT")
@@ -116,16 +116,6 @@ def main(config):
         ), "Please set environment variables `WANDB_ACCT` and `WANDB_PROJ` with \n\
                 your wandb user/organization name and project title, respectively."
 
-        # experiment = wandb.init(
-        #     project=project,
-        #     entity=entity,
-        #     config=config,
-        #     dir=log_dir,
-        #     reinit=True,
-        # )
-        # wan_config = wandb.config
-        # wandb.run.name = config['run_name']
-        # wandb.run.save()
         logger = WandbLogger(project=project,
                              name=config['run_name'],
                              config=config,
@@ -202,18 +192,18 @@ def main(config):
         default_root_dir=f"{config['save_dir']}/checkpoints",
     )
 
-    trainer.fit(model=bilstm,
-                train_dataloaders=train_dloader,
-                val_dataloaders=test_dloader)
+    # trainer.fit(model=bilstm,
+    #             train_dataloaders=train_dloader,
+    #             val_dataloaders=test_dloader)
 
-    # Test
-    trainer.test(model=bilstm, dataloaders=test_dloader)
+    # # Test
+    # trainer.test(model=bilstm, dataloaders=test_dloader)
 
     output_path = "output/{}.{}.txt".format(config['run_name'], date.today())
     output_file = open(output_path, "w")
     with open("seg-data/testing/pku_test.utf8", "r") as test_data:
         for sentence in tqdm(test_data.readlines(), desc="Predicting"):
-            res = predict(bilstm, sentence, train_dataset.word_decoder,
+            res = predict(bilstm, sentence, train_dataset.word_encoder,
                           config['token_length'], train_dataset.label_decoder)
             output_file.write(res + "\n")
     output_file.close()
