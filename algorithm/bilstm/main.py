@@ -8,6 +8,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'data'))
 sys.path.append(os.path.join(os.path.dirname(__file__), 'model'))
 sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
 
+import time
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -19,7 +20,7 @@ from model.bilstm import BiLSTM
 from utils.tag2seg import tag2seg
 
 config = {
-    "run_name": "PKU",
+    "run_name": "MSR",
     "vocab_size": 1e7,
     "token_length": 1000,
     "embedding_dim": 10,
@@ -33,7 +34,7 @@ config = {
         'E': 2,
         'S': 3
     },
-    "batch_size": 1000,
+    "batch_size": 256,
     "max_len": 128,
     "base_lr": 1e-2,
     "init_lr": 1e-10,
@@ -41,21 +42,25 @@ config = {
     "warmup_steps": 10,
     "decay_factor": 0.5,
     "seed": 42,
-    "wandb": True,
+    "wandb": False,
     "wandb_project": "nlp-bilstm",
     "wandb_entity": "azerrroth",
     "early_stopping": True,
     "gradient_clip_norm": 0,
     "save_dir": "./output",
+    "num_workers": 16,
+    "train_data_path": "seg-data/training/msr_training.utf8",
+    "test_data_path": "seg-data/testing/msr_test.utf8",
+    "gold_data_path": "seg-data/gold/msr_test_gold.utf8",
 }
 
 
-def create_callbacks(config):
+def create_callbacks(config, model_save_dir):
     saving = ModelCheckpoint(
-        dirpath=
-        f"{config['save_dir']}/model_checkpoints/{config['run_name']}_{''.join([str(random.randint(0,9)) for _ in range(9)])}",
-        monitor="valid/f1",
-        mode="min",
+        dirpath=f"{config['save_dir']}/model_checkpoints/{model_save_dir}",
+        monitor="valid_f1",
+        mode="max",
+        save_last=True,
         filename=f"{config['run_name']}" +
         "{epoch:02d}-{valid_loss:.2f}-{valid_f1:.2f}",
         save_top_k=3,
@@ -65,8 +70,8 @@ def create_callbacks(config):
     if config['early_stopping']:
         callbacks.append(
             pl.callbacks.early_stopping.EarlyStopping(
-                monitor="valid/f1",
-                patience=5,
+                monitor="valid_f1",
+                patience=10,
             ))
 
     if config['wandb']:
@@ -96,6 +101,7 @@ def predict(model, sentence: str, vocab: dict, token_length: int,
 def main(config):
 
     from pytorch_lightning import seed_everything
+    model_save_dir = f"{config['run_name']}_{time.strftime('%m-%dT%H:%M', time.localtime())}"
     seed_everything(config['seed'])
     if config['wandb']:
         project = config.get('wandb_project')
@@ -121,13 +127,13 @@ def main(config):
                              config=config,
                              dir=log_dir,
                              reinit=True,
-                             log_model=True,
+                             log_model=False,
                              save_dir=f"{config['save_dir']}/logs")
         logger.log_hyperparams(logger.experiment.config)
 
     label2id = config["label2id"]
     train_dloader, train_dataset = make_dloader(
-        datapath='seg-data/training/pku_training.utf8',
+        datapath=config['train_data_path'],
         batch_size=config['batch_size'],
         label_encoder=label2id,
         max_size=1e7,
@@ -135,11 +141,11 @@ def main(config):
         shuffle=True,
         train=True,
         token_length=config['token_length'],
-        num_workers=32,
+        num_workers=config["num_workers"],
     )
 
     test_dloader, test_dataset = make_dloader(
-        datapath='seg-data/gold/pku_test_gold.utf8',
+        datapath=config['gold_data_path'],
         batch_size=config['batch_size'],
         label_encoder=label2id,
         max_size=1e7,
@@ -148,7 +154,7 @@ def main(config):
         train=False,
         word_encoder=train_dataset.word_encoder,
         token_length=config['token_length'],
-        num_workers=32,
+        num_workers=config["num_workers"],
     )
 
     bilstm = BiLSTM(
@@ -168,9 +174,9 @@ def main(config):
         warmup_steps=config['warmup_steps'],
         decay_factor=config['decay_factor'],
     )
-    print(pl.utilities.model_summary.summarize(bilstm, max_depth=2))
+    # print(pl.utilities.model_summary.summarize(bilstm, max_depth=2))
 
-    callbacks = create_callbacks(config)
+    callbacks = create_callbacks(config, model_save_dir)
 
     # Train
     trainer = pl.Trainer(
@@ -179,7 +185,7 @@ def main(config):
         auto_select_gpus=True,
         gpus=1,
         callbacks=callbacks,
-        # strategy='dp',
+        strategy='dp',
         logger=logger if config["wandb"] else None,
         log_gpu_memory=True,
         gradient_clip_val=config["gradient_clip_norm"],
@@ -197,11 +203,19 @@ def main(config):
                 val_dataloaders=test_dloader)
 
     # Test
+    # Get best model
+    model_checkpoint_callback = callbacks[0]
+    best_model_path = model_checkpoint_callback.best_model_path
+
+    checkpoint = torch.load(best_model_path)
+    bilstm.load_state_dict(checkpoint["state_dict"])
+
+    # best_model = BiLSTM.load_from_checkpoint(checkpoint_path=best_model_path, )
     trainer.test(model=bilstm, dataloaders=test_dloader)
 
     output_path = "output/{}.{}.txt".format(config['run_name'], date.today())
     output_file = open(output_path, "w")
-    with open("seg-data/testing/pku_test.utf8", "r") as test_data:
+    with open(config["test_data_path"], "r") as test_data:
         for sentence in tqdm(test_data.readlines(), desc="Predicting"):
             res = predict(bilstm, sentence, train_dataset.word_encoder,
                           config['token_length'], train_dataset.label_decoder)

@@ -47,7 +47,7 @@ class BiLSTM(pl.LightningModule):
         self.base_lr = base_lr
         self.l2_coeff = l2_coeff
         self.warmup_steps = warmup_steps
-        self.decay_factor = 0.5
+        self.decay_factor = decay_factor
         self.label_decoder = label_decoder
         self.embedding = nn.Embedding(self.vocab_size, self.embedding_dim)
         self.lstm = nn.LSTM(self.embedding_dim,
