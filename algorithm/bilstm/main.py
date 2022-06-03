@@ -1,5 +1,6 @@
 from datetime import date
 import os
+from statistics import mode
 import sys
 
 from tqdm import tqdm
@@ -71,6 +72,7 @@ def create_callbacks(config, model_save_dir):
         callbacks.append(
             pl.callbacks.early_stopping.EarlyStopping(
                 monitor="valid_f1",
+                mode="max",
                 patience=10,
             ))
 
