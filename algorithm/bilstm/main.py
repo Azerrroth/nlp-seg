@@ -1,9 +1,9 @@
 from datetime import date
 import os
-from statistics import mode
 import sys
 
 from tqdm import tqdm
+import yaml
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'data'))
 sys.path.append(os.path.join(os.path.dirname(__file__), 'model'))
@@ -18,16 +18,19 @@ import random
 import numpy as np
 from data.dataset import make_dloader
 from model.bilstm import BiLSTM
+from model.bert import Bert
 from utils.tag2seg import tag2seg
+from utils.cut_list import cut_list
 
-config = {
-    "run_name": "MSR",
+base_config = {
+    "run_name": "PKU_0dropout",
+    "model_name": "bilstm",  # (bert, bilstm)
     "vocab_size": 1e7,
     "token_length": 1000,
     "embedding_dim": 10,
     "hidden_dim": 256,
     "num_layers": 3,
-    "lstm_dropout": 0.2,
+    "lstm_dropout": 0,
     "label_size": 4,
     "label2id": {
         'B': 0,
@@ -43,17 +46,63 @@ config = {
     "warmup_steps": 10,
     "decay_factor": 0.5,
     "seed": 42,
-    "wandb": False,
+    "wandb": True,
     "wandb_project": "nlp-bilstm",
     "wandb_entity": "azerrroth",
     "early_stopping": True,
     "gradient_clip_norm": 0,
     "save_dir": "./output",
     "num_workers": 16,
-    "train_data_path": "seg-data/training/msr_training.utf8",
-    "test_data_path": "seg-data/testing/msr_test.utf8",
-    "gold_data_path": "seg-data/gold/msr_test_gold.utf8",
+    "train_data_path": "seg-data/training/pku_training.utf8",
+    "test_data_path": "seg-data/testing/pku_test.utf8",
+    "gold_data_path": "seg-data/gold/pku_test_gold.utf8",
 }
+
+
+def create_models(config, label_decoder):
+    if config["model_name"] == "bert":
+        model = Bert(
+            vocab_size=config["vocab_size"],
+            embedding_dim=config["embedding_dim"],
+            hidden_dim=config["hidden_dim"],
+            num_layers=config["num_layers"],
+            lstm_dropout=config["lstm_dropout"],
+            label_size=config["label_size"],
+            batch_size=config["batch_size"],
+            max_len=config["max_len"],
+            label_decoder=label_decoder,
+            bert_model_name=config["bert_model_name"],
+            device=torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu"),
+            base_lr=config["base_lr"],
+            init_lr=config["init_lr"],
+            l2_coeff=config["l2_coeff"],
+            warmup_steps=config["warmup_steps"],
+            decay_factor=config["decay_factor"],
+        )
+    elif config["model_name"] == "bilstm":
+        model = BiLSTM(
+            vocab_size=config["vocab_size"],
+            embedding_dim=config["embedding_dim"],
+            hidden_dim=config["hidden_dim"],
+            num_layers=config["num_layers"],
+            lstm_dropout=config["lstm_dropout"],
+            label_size=config["label_size"],
+            batch_size=config["batch_size"],
+            max_len=config["max_len"],
+            device=torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu"),
+            label_decoder=label_decoder,
+            base_lr=config["base_lr"],
+            init_lr=config["init_lr"],
+            l2_coeff=config["l2_coeff"],
+            warmup_steps=config["warmup_steps"],
+            decay_factor=config["decay_factor"],
+        )
+    else:
+        raise ValueError(f"Unsupported model: {config['model_name']}")
+
+    return model
 
 
 def create_callbacks(config, model_save_dir):
@@ -97,7 +146,7 @@ def predict(model, sentence: str, vocab: dict, token_length: int,
     # tag_preds = model.crf.decode(tag_preds, mask)
     tag_preds = np.array(tag_preds).flatten()
     tags = [label_decoder.get(x) for x in tag_preds]
-    return tag2seg(sentence, tags).strip()
+    return tag2seg(sentence, tags)
 
 
 def main(config):
@@ -143,6 +192,7 @@ def main(config):
         shuffle=True,
         train=True,
         token_length=config['token_length'],
+        limit_max_len=config['limit_max_len'],
         num_workers=config["num_workers"],
     )
 
@@ -156,26 +206,28 @@ def main(config):
         train=False,
         word_encoder=train_dataset.word_encoder,
         token_length=config['token_length'],
+        limit_max_len=config['limit_max_len'],
         num_workers=config["num_workers"],
     )
 
-    bilstm = BiLSTM(
-        vocab_size=config['vocab_size'],
-        embedding_dim=config['embedding_dim'],
-        hidden_dim=config['hidden_dim'],
-        num_layers=config['num_layers'],
-        lstm_dropout=config['lstm_dropout'],
-        label_size=config['label_size'],
-        batch_size=config['batch_size'],
-        max_len=config['max_len'],
-        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-        label_decoder=train_dataset.label_decoder,
-        base_lr=config['base_lr'],
-        init_lr=config['init_lr'],
-        l2_coeff=config['l2_coeff'],
-        warmup_steps=config['warmup_steps'],
-        decay_factor=config['decay_factor'],
-    )
+    model = create_models(config, train_dataset.label_decoder)
+    # model = BiLSTM(
+    #     vocab_size=config['vocab_size'],
+    #     embedding_dim=config['embedding_dim'],
+    #     hidden_dim=config['hidden_dim'],
+    #     num_layers=config['num_layers'],
+    #     lstm_dropout=config['lstm_dropout'],
+    #     label_size=config['label_size'],
+    #     batch_size=config['batch_size'],
+    #     max_len=config['max_len'],
+    #     device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+    #     label_decoder=train_dataset.label_decoder,
+    #     base_lr=config['base_lr'],
+    #     init_lr=config['init_lr'],
+    #     l2_coeff=config['l2_coeff'],
+    #     warmup_steps=config['warmup_steps'],
+    #     decay_factor=config['decay_factor'],
+    # )
     # print(pl.utilities.model_summary.summarize(bilstm, max_depth=2))
 
     callbacks = create_callbacks(config, model_save_dir)
@@ -193,14 +245,14 @@ def main(config):
         gradient_clip_val=config["gradient_clip_norm"],
         gradient_clip_algorithm="norm",
         # overfit_batches=0,
-        accumulate_grad_batches=1,
+        accumulate_grad_batches=10,
         sync_batchnorm=True,
         val_check_interval=1.0,
         max_epochs=100,
         default_root_dir=f"{config['save_dir']}/checkpoints",
     )
 
-    trainer.fit(model=bilstm,
+    trainer.fit(model=model,
                 train_dataloaders=train_dloader,
                 val_dataloaders=test_dloader)
 
@@ -210,25 +262,56 @@ def main(config):
     best_model_path = model_checkpoint_callback.best_model_path
 
     checkpoint = torch.load(best_model_path)
-    bilstm.load_state_dict(checkpoint["state_dict"])
+    model.load_state_dict(checkpoint["state_dict"])
 
     # best_model = BiLSTM.load_from_checkpoint(checkpoint_path=best_model_path, )
-    trainer.test(model=bilstm, dataloaders=test_dloader)
+    trainer.test(model=model, dataloaders=test_dloader)
 
     output_path = "output/{}.{}.txt".format(config['run_name'], date.today())
     output_file = open(output_path, "w")
     with open(config["test_data_path"], "r") as test_data:
         for sentence in tqdm(test_data.readlines(), desc="Predicting"):
-            res = predict(bilstm, sentence, train_dataset.word_encoder,
-                          config['token_length'], train_dataset.label_decoder)
-            output_file.write(res + "\n")
+            if len(sentence) > config['token_length'] and config.get(
+                    "limit_max_len", False):
+
+                subsentence = cut_list(list(sentence), config['token_length'])
+                res = ""
+                for item in subsentence:
+                    res += predict(model, "".join(item),
+                                   train_dataset.word_encoder,
+                                   config['token_length'],
+                                   train_dataset.label_decoder)
+            else:
+                res = predict(model, sentence, train_dataset.word_encoder,
+                              config['token_length'],
+                              train_dataset.label_decoder)
+            output_file.write(res.strip() + "\n")
     output_file.close()
 
     case = "今天天气怎么样？"
     print(
-        predict(bilstm, case, train_dataset.word_encoder,
+        predict(model, case, train_dataset.word_encoder,
                 config['token_length'], train_dataset.label_decoder))
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config",
+                        type=str,
+                        default="algorithm/bilstm/config/bert_pku.yml",
+                        help="path to config file")
+
+    args = parser.parse_args()
+
+    if os.path.exists(args.config):
+        with open(args.config, "r") as f:
+            config = yaml.load(f, Loader=yaml.FullLoader)
+    else:
+        config = base_config
+
+    print(config)
     main(config=config)
+
+    pass

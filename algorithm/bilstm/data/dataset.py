@@ -10,6 +10,7 @@ from process import get_vocabulary, process_data
 # 建立词表，将词表中的词转换为数字索引
 # 文本标签表 标记为 B E M S
 class SegDataset(Dataset.Dataset):
+
     def __init__(self,
                  datapath: str,
                  label_encoder: dict,
@@ -17,11 +18,13 @@ class SegDataset(Dataset.Dataset):
                  sep: str = ' ',
                  train: bool = True,
                  word_encoder: dict = None,
-                 token_length: int = 1000):
+                 token_length: int = 1000,
+                 limit_max_len: bool = False):
         # self.super().__init__()
 
         self.datapath = datapath
         self.token_length = token_length
+        self.limit_max_len = limit_max_len
         word_list, label_list = process_data(datapath, sep=sep)
         if word_encoder is None:
             word_encoder = get_vocabulary(word_list=word_list,
@@ -53,8 +56,15 @@ class SegDataset(Dataset.Dataset):
             word_id = [self.word_encoder[word] for word in words]  # word to id
             label_id = [self.label_encoder[label]
                         for label in labels]  # label to id
-            processed.append((word_id, label_id))
-        print("-------- Process Done! --------")
+
+            if self.limit_max_len and len(word_id) > self.token_length:
+                new_word_id = self.cut_list(word_id, self.token_length)
+                new_label_id = self.cut_list(label_id, self.token_length)
+                splited_processed = list(zip(new_word_id, new_label_id))
+                processed.extend(splited_processed)
+            else:
+                processed.append((word_id, label_id))
+        print("Finish preprocess")
         return processed
 
     def __getitem__(self, idx):
@@ -67,7 +77,11 @@ class SegDataset(Dataset.Dataset):
 
     def get_long_tensor(self, words, labels, batch_size):
         # assert self.token_length >= max([len(x) for x in labels])
-        token_len = max(self.token_length, max([len(x) for x in labels]))
+        if self.limit_max_len:
+            token_len = self.token_length
+        else:
+            token_len = max(self.token_length, max([len(x) for x in labels]))
+
         word_tokens = torch.LongTensor(batch_size, token_len).fill_(0)
         label_tokens = torch.LongTensor(batch_size, token_len).fill_(0)
         mask_tokens = torch.BoolTensor(batch_size, token_len).fill_(0)
@@ -104,6 +118,27 @@ class SegDataset(Dataset.Dataset):
     def decode_word(self, word_id):
         return self.word_decoder.get(word_id)
 
+    def cut_list(self, lists, cut_len):
+        """
+        将列表拆分为指定长度的多个列表
+        :param lists: 初始列表
+        :param cut_len: 每个列表的长度
+        :return: 一个二维数组 [[x,x],[x,x]]
+        """
+        res_data = []
+        if len(lists) > cut_len:
+            for i in range(int(len(lists) / cut_len)):
+                cut_a = lists[cut_len * i:cut_len * (i + 1)]
+                res_data.append(cut_a)
+
+            last_data = lists[int(len(lists) / cut_len) * cut_len:]
+            if last_data:
+                res_data.append(last_data)
+        else:
+            res_data.append(lists)
+
+        return res_data
+
 
 def make_dloader(datapath,
                  batch_size,
@@ -113,6 +148,7 @@ def make_dloader(datapath,
                  train: bool = True,
                  word_encoder=None,
                  token_length: int = 1000,
+                 limit_max_len: bool = True,
                  num_workers: int = 32,
                  shuffle: bool = False):
     dataset = SegDataset(datapath=datapath,
@@ -121,7 +157,8 @@ def make_dloader(datapath,
                          sep=sep,
                          train=train,
                          word_encoder=word_encoder,
-                         token_length=token_length)
+                         token_length=token_length,
+                         limit_max_len=limit_max_len)
     dloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
