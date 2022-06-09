@@ -106,9 +106,144 @@ TODO
 
 同时，对于数据的预处理也尤为重要，好的预处理给分词结果带来的提升甚至要优与实验算法的差异。
 
-## Evaluation Script
+### Bidirectional LSTM + CRF
 
+中文分词即序列标注任务，主要是用 B (Begin)、M (Middle)、E (End)、S(Single) 四类标签将句子中的中文字符进行标记，然后根据标记将句子分割，达到分词的目标。
+
+#### Bidirectional LSTM
+
+序列模型 LSTM (Long Short-Term Memory) 可以学习序列的先前状态结合先序状态对当前输入做出判断，同句子序列一致，但是单向的 LSTM 在句子序列标注工作中，无法考虑字词在句子中逆序的编码信息，而文本标注任务在实践中往往是与上下文相关联的，所以在这里采用的 Bidirectional-LSTM 即双向 LSTM 可以结合句子的上下文状态，即对给定字在原文中的前后文信息结合进行判断，能够在理论上既包含历史信息、又能包含未来信息，可能会更有利于对当前词的标注。
+
+![img](https://image.jiqizhixin.com/uploads/editor/df55a9f8-422e-4252-a768-9cf4f49bbb56/1540354954203.png)
+
+> 图源：机器之心——BiLSTM 介绍及代码实现 https://www.jiqizhixin.com/articles/2018-10-24-13
+
+
+
+#### CRF
+
+CRF (Conditional Random Field, 条件随机场) 基于文本标注，使用特征函数 $$f(X, i, y_i, y_{i-1})$$ 来抽象表达特征，其中$X$表示输入序列，$i$表示当前位置，$y_i$表示当前的状态，而$y_{i-1}$表示上一个状态。
+
+给定观测的序列$\textbf{X} = X_1X_2X_3...X_n$，可以构成两种标记的团，即：
+
+1. $Y_i, X, i = 1, 2, ... ,n$
+2. $Y_{i-1}, Y_i, X, i = 2, ..., n$
+
+CRF 使用特征函数定义概率
+$$
+P(\pmb Y|\pmb X)=\frac1Zexp(\sum_{j=1}^{K_1}\sum_{i=2}^{n}\lambda_jt_j(Y_{i-1},Y_i,\pmb X,i)+\sum_{k=1}^{K_2}\sum_{i=1}^n\mu_ks_k(Y_i,\pmb X,i))
+$$
+其中：
+
+- $t_j(Y_{i-1},Y_i,\pmb X,i)$ 为转移特征函数，表现了相邻标记变量间的相关关系。
+- $s_k(Y_i,\pmb X,i)$ 为标记位置 $i$ 的状态特征函数，表现了观测序列 $\pmb X$ 对标记变量的影响。
+- $\lambda_j, \mu_k$ 为参数，$Z$ 为规范化因子，$K_1$ 为转移特征函数个数，$K_2$为状态特征函数个数
+
+CRF 求解序列标记的概率后，用 Viterbi 算法找到最佳路径，即为该序列概率最大的标注。
+
+#### 实现过程
+
+本次分词任务主要将 BiLSTM 与 CRF 相结合，首先要对序列进行标注，对每个字进行标签标记；然后对语料中的词进行编码，将词的下标转换为向量，之后将词输入 Bi-LSTM 网络，预测其所属标签的概率；之后将预测结果输入 CRF，根据 Viterbi 算法，计算标签预测的最佳路径，得到词序列对应的标签；最后，根据得到的 BMES 标签即可对输入句子进行分词。
+
+```mermaid
+graph LR
+A[(语料)] -->
+pre(预处理) -->
+B(标签提取) --> 
+C(Bi-LSTM) -->
+D(CRF) --> 
+E(标签预测) -->
+F[(分词结果)]
+%% if{a%b=0 ?}
+%% if --->|yes| f1[GCD = b] --> B(结束)
+%% if --->|no| f2["a, b = b, a % b "]-->if
 ```
+
+##### 语料预处理
+
+预处理阶段主要从训练数据中提取字典，然后按照词（汉语中的字）出现频率，将其映射为一个非负整数。
+
+同时对于给定标签，也将标签映射为一个正整数。这里定义了 B M E S 四类标签，可以将标签映射为
+
+```python
+{
+    'B': 0,
+    'M': 1,
+    'E': 2,
+    'S': 3
+}
+```
+
+
+
+##### 标签提取
+
+标签提取阶段主要将训练数据中的词（字）映射为标签的序号，按照标签意义对句子中的字进行标注：
+
+- B, Begin: 分词的开头字标为 B
+- M, Middle: 分词的中间字标记 M
+- E, End: 分词的末尾字标记为 E
+- S, Single: 单个字作为分词的标记为 S
+
+比如对于句子：
+
+> 人们  常  说  生活  是  一  部  教科书  ，  而  血  与  火  的  战争  更  是  不可多得  的  教科书  ，  她  确实  是  名副其实  的  ‘  我  的  大学  ’  。
+
+对应的标签就为
+
+> 人们  常  说  生活  是  一  部  教科书  ，  而  血  与  火  的  战争  更  是  不可多得  的  教科书  ，  她  确实  是  名副其实  的  ‘  我  的  大学  ’  。
+>
+> BE S S BE S S S BME S S S S S S BE S S BMME S BME S S S S S BMME S S S S BE S S
+
+##### Bi-LSTM
+
+Bi-LSTM 是 在原来 LSTM 模型的改进，是一种序列处理模型，主要变化在于增加了逆序序列隐状态的转移，即由两个 LSTM 组成：一个在前向接收输入，另一个在后向接收输入，Bi-LSTM 有效地增加了网络可用的信息量，使得算法能够得知上下文信息。
+
+<img src="https://production-media.paperswithcode.com/methods/Screen_Shot_2020-05-25_at_8.54.27_PM.png" alt="img" style="zoom:30%;" />
+
+> Modelling Radiological Language with Bidirectional Long Short-Term Memory Networks, Cornegruta et al
+
+在本次实验中，这里使用了 PyTorch 的 LSTM 实现，设置 *bidirection=True* 即可实现双向的 LSTM。
+
+##### CRF
+
+CRF （条件随机场）在给定一组输入序列条件下另一组输出序列的条件概率分布，CRF 接收到来自上层双向LSTM输出的对于序列中单个字的四种标签的预测概率，而后输出使得输入序列概率最大的序列的标签。本次实验中使用了 Pypi 上公开的**pytorch-crf**工具，方便实现 CRF 中评分函数及状态转移矩阵等参数的训练优化。
+
+##### 标签预测
+
+上述的上述的**pytorch-crf**的输出即为整个神经网络的输出，为输入序列中词对应的标签的序号。这一步骤根据标签编码方式对其进行解码，就能得到模型对输入序列预测的标签。
+
+##### 分词结果
+
+根据上一步预测的文本标签和标签的实际意义，可以对词语进行分词。在本次实验中，对于 B M E S 的实际意义，对其进行分词：
+
+- B：Begin，词语的开头字，即与句子前文分隔。
+- M：Middle，词语的中部，与前文和后文相连接。
+- E：End，词语的尾部字，与后文相分隔。
+- S：Single，单字成词，与前后文相分隔。
+
+#### 实验结果
+
+##### MSR Dataset
+
+|   Method   | TOTAL TRUE WORD COUNT | TOTAL TEST WORD COUNT | Recall | Precision | F1-score | OOV Rate | OOV Recall Rate | IV Recall Rate |
+| :--------: | :-------------------: | :-------------------: | ------ | :-------: | :------: | :------: | :-------------: | :------------: |
+| LSTM + CRF |        106873         |        106809         | 0.938  |   0.938   |  0.938   |  0.026   |      0.690      |     0.945      |
+
+
+##### PKU Dataset
+
+|   Method    | TOTAL TRUE WORD COUNT | TOTAL TEST WORD COUNT | Recall | Precision | F1-score | OOV Rate | OOV Recall Rate | IV Recall Rate |
+| :---------: | :-------------------: | :-------------------: | ------ | :-------: | :------: | :------: | :-------------: | :------------: |
+| LSTM +  CRF |        104372         |        103642         | 0.891  |   0.897   |  0.894   |  0.058   |      0.528      |     0.913      |
+
+
+
+
+
+## Evaluation Scripts
+
+```shell
 perl ./seg-data/scripts/score seg-data/gold/pku_training_words.utf8 ./seg-data/gold/pku_test_gold.utf8 ./output/pku_test.utf8.seg > pku_score.txt
 
 perl ./seg-data/scripts/score seg-data/gold/msr_training_words.utf8 ./seg-data/gold/msr_test_gold.utf8 ./output/msr_test.utf8.seg > msr_score.txt
