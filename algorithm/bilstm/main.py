@@ -21,6 +21,7 @@ from model.bilstm import BiLSTM
 from model.bert import Bert
 from utils.tag2seg import tag2seg
 from utils.cut_list import cut_list
+from transformers import BertTokenizer
 
 base_config = {
     "run_name": "PKU_0dropout",
