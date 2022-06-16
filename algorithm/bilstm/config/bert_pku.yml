@@ -3,13 +3,13 @@ run_name: PKU_bert
 model_name: bert
 save_dir: ./output
 seed: 42
-wandb: true
+wandb: false
 wandb_entity: azerrroth
 wandb_project: nlp-bilstm
 warmup_steps: 10
 
 # Training parameters
-base_lr: 0.01
+base_lr: 0.001
 batch_size: 16
 decay_factor: 0.5
 early_stopping: true

@@ -5,26 +5,33 @@ import torch.optim as optim
 import torch.utils.data as Dataset
 
 from process import get_vocabulary, process_data
+from transformers import BertTokenizer
 
 
 # 建立词表，将词表中的词转换为数字索引
 # 文本标签表 标记为 B E M S
 class SegDataset(Dataset.Dataset):
-
-    def __init__(self,
-                 datapath: str,
-                 label_encoder: dict,
-                 max_size=1e7,
-                 sep: str = ' ',
-                 train: bool = True,
-                 word_encoder: dict = None,
-                 token_length: int = 1000,
-                 limit_max_len: bool = False):
+    def __init__(
+        self,
+        datapath: str,
+        label_encoder: dict,
+        max_size=1e7,
+        sep: str = ' ',
+        train: bool = True,
+        word_encoder: dict = None,
+        token_length: int = 1000,
+        limit_max_len: bool = False,
+        model_name: str = "bert",
+    ):
         # self.super().__init__()
 
         self.datapath = datapath
         self.token_length = token_length
         self.limit_max_len = limit_max_len
+        self.model_name = model_name
+        if model_name == "bert":
+            self.tokenizer = BertTokenizer.from_pretrained("bert-base-chinese",
+                                                           do_lower_case=True)
         word_list, label_list = process_data(datapath, sep=sep)
         if word_encoder is None:
             word_encoder = get_vocabulary(word_list=word_list,
@@ -53,8 +60,8 @@ class SegDataset(Dataset.Dataset):
             for word in words:
                 self.check_exists(word)
 
-            word_id = [self.word_encoder[word] for word in words]  # word to id
-            label_id = [self.label_encoder[label]
+            word_id = [self.encode_word(word) for word in words]  # word to id
+            label_id = [self.encode_label(label)
                         for label in labels]  # label to id
 
             if self.limit_max_len and len(word_id) > self.token_length:
@@ -113,9 +120,13 @@ class SegDataset(Dataset.Dataset):
         return self.label_decoder.get(label_id)
 
     def encode_word(self, word):
+        if self.model_name == "bert":
+            return self.tokenizer.convert_tokens_to_ids(word)
         return self.word_encoder.get(word)
 
     def decode_word(self, word_id):
+        if self.model_name == "bert":
+            return self.tokenizer.convert_ids_to_tokens(word_id)
         return self.word_decoder.get(word_id)
 
     def cut_list(self, lists, cut_len):
@@ -143,6 +154,7 @@ class SegDataset(Dataset.Dataset):
 def make_dloader(datapath,
                  batch_size,
                  label_encoder,
+                 model_name: str,
                  max_size=1e7,
                  sep=' ',
                  train: bool = True,
@@ -151,14 +163,17 @@ def make_dloader(datapath,
                  limit_max_len: bool = True,
                  num_workers: int = 32,
                  shuffle: bool = False):
-    dataset = SegDataset(datapath=datapath,
-                         label_encoder=label_encoder,
-                         max_size=max_size,
-                         sep=sep,
-                         train=train,
-                         word_encoder=word_encoder,
-                         token_length=token_length,
-                         limit_max_len=limit_max_len)
+    dataset = SegDataset(
+        datapath=datapath,
+        label_encoder=label_encoder,
+        max_size=max_size,
+        sep=sep,
+        train=train,
+        word_encoder=word_encoder,
+        token_length=token_length,
+        limit_max_len=limit_max_len,
+        model_name=model_name,
+    )
     dloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -172,8 +187,11 @@ def make_dloader(datapath,
 if __name__ == '__main__':
     label2id = {'B': 0, 'M': 1, 'E': 2, 'S': 3}
     file_path = 'seg-data/training/pku_training.utf8'
-    loader, train_dataset = make_dloader(file_path,
-                                         batch_size=32,
-                                         label_encoder=label2id,
-                                         max_size=1e7,
-                                         sep=' ')
+    loader, train_dataset = make_dloader(
+        file_path,
+        batch_size=32,
+        label_encoder=label2id,
+        max_size=1e7,
+        sep=' ',
+        model_name='bert',
+    )

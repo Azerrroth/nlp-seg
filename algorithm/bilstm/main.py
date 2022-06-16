@@ -1,4 +1,5 @@
 from datetime import date
+from email.mime import base
 import os
 import sys
 
@@ -131,21 +132,20 @@ def create_callbacks(config, model_save_dir):
     return callbacks
 
 
-def predict(model, sentence: str, vocab: dict, token_length: int,
-            label_decoder: dict):
+def predict(model, sentence: str, token_length: int, dataset):
     words_arr = sentence.strip()
     words_arr = list(words_arr)
     sentence_vec = torch.LongTensor(1, token_length).fill_(0)
     mask = torch.ByteTensor(1, token_length).fill_(0)
     for i, word in enumerate(words_arr):
-        sentence_vec[0, i] = vocab.get(word, 0)
+        sentence_vec[0, i] = dataset.decode_word(word)
     mask[0, :len(sentence)] = torch.tensor([1] * len(sentence),
                                            dtype=torch.bool)
 
     tag_preds = model.predict(sentence_vec, mask)
     # tag_preds = model.crf.decode(tag_preds, mask)
     tag_preds = np.array(tag_preds).flatten()
-    tags = [label_decoder.get(x) for x in tag_preds]
+    tags = [dataset.decode_label(x) for x in tag_preds]
     return tag2seg(sentence, tags)
 
 
@@ -194,6 +194,7 @@ def main(config):
         token_length=config['token_length'],
         limit_max_len=config['limit_max_len'],
         num_workers=config["num_workers"],
+        model_name=config["model_name"],
     )
 
     test_dloader, test_dataset = make_dloader(
@@ -208,33 +209,16 @@ def main(config):
         token_length=config['token_length'],
         limit_max_len=config['limit_max_len'],
         num_workers=config["num_workers"],
+        model_name=config["model_name"],
     )
 
     model = create_models(config, train_dataset.label_decoder)
-    # model = BiLSTM(
-    #     vocab_size=config['vocab_size'],
-    #     embedding_dim=config['embedding_dim'],
-    #     hidden_dim=config['hidden_dim'],
-    #     num_layers=config['num_layers'],
-    #     lstm_dropout=config['lstm_dropout'],
-    #     label_size=config['label_size'],
-    #     batch_size=config['batch_size'],
-    #     max_len=config['max_len'],
-    #     device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-    #     label_decoder=train_dataset.label_decoder,
-    #     base_lr=config['base_lr'],
-    #     init_lr=config['init_lr'],
-    #     l2_coeff=config['l2_coeff'],
-    #     warmup_steps=config['warmup_steps'],
-    #     decay_factor=config['decay_factor'],
-    # )
-    # print(pl.utilities.model_summary.summarize(bilstm, max_depth=2))
 
     callbacks = create_callbacks(config, model_save_dir)
 
     # Train
     trainer = pl.Trainer(
-        precision=16,
+        precision=32,
         amp_backend="native",
         auto_select_gpus=True,
         gpus=1,
@@ -277,28 +261,28 @@ def main(config):
                 subsentence = cut_list(list(sentence), config['token_length'])
                 res = ""
                 for item in subsentence:
-                    res += predict(model, "".join(item),
-                                   train_dataset.word_encoder,
+                    res += predict(model,
+                                   "".join(item),
                                    config['token_length'],
-                                   train_dataset.label_decoder)
+                                   dataset=train_dataset)
             else:
-                res = predict(model, sentence, train_dataset.word_encoder,
+                res = predict(model,
+                              sentence,
                               config['token_length'],
-                              train_dataset.label_decoder)
+                              dataset=train_dataset)
             output_file.write(res.strip() + "\n")
     output_file.close()
 
     case = "今天天气怎么样？"
-    print(
-        predict(model, case, train_dataset.word_encoder,
-                config['token_length'], train_dataset.label_decoder))
+    print(predict(model, case, config['token_length'], dataset=train_dataset))
 
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config",
+    parser.add_argument("-c",
+                        "--config",
                         type=str,
                         default="algorithm/bilstm/config/bert_pku.yml",
                         help="path to config file")
@@ -308,6 +292,12 @@ if __name__ == "__main__":
     if os.path.exists(args.config):
         with open(args.config, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
+
+        for key in base_config:
+            if config.get(key, None) is None:
+                config[key] = base_config[key]
+                print("{} is not in config file, use default value {}".format(
+                    key, base_config[key]))
     else:
         config = base_config
 
