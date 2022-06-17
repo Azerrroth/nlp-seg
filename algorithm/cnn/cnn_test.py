@@ -110,7 +110,7 @@ def cnn_seg(path):
     result = load_model_prediction(vacabulary_size, x_data=artical2id)
 
     # 将结果存储到文件中
-    fw = open("/content/drive/MyDrive/result_data/pku_test_result.utf8", "w+", encoding='utf-8')
+    fw = open("/content/drive/MyDrive/result_data/cnn_pku_test_result.utf8", "w+", encoding='utf-8')
     for i in range(len(result)):
       # 获取每一句话的BSME列表
       best_path = viterbi(result[i], trans_pro)
